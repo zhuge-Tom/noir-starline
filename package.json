@@ -8,9 +8,11 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "node scripts/build.mjs",
-    "start": "wrangler dev --config dist/server/wrangler.json",
+    "start": "node scripts/serve-local.mjs",
     "lint": "oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "preview": "node scripts/serve-local.mjs",
+    "test:local": "node scripts/verify-local.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
