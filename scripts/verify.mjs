@@ -10,4 +10,11 @@ const actor=buildDetailedCharacter();let before=[];actor.root.traverse(o=>{if(o.
 for(const t of [0,5.2,19.5,1000])actor.animate(t,0);
 console.log(JSON.stringify({passed:true,trainMeshes:meshes,wheelGroups:train.wheels.length,trainBounds:{min:bounds.min.toArray(),max:bounds.max.toArray()},animatedMeshes:i}));
 
-const mats=new Set();actor.root.traverse(o=>{if(o.isMesh)mats.add(o.material)});assert([...mats].some(m=>m.isShaderMaterial),'Passenger must use bounded custom cel shading');console.log('Character v2: bounded cel materials and animated detailed geometry verified.');
+const mats=new Set();actor.root.traverse(o=>{if(o.isMesh){for(const m of (Array.isArray(o.material)?o.material:[o.material]))mats.add(m);const uv=o.geometry.attributes.uv;if(uv)assert(uv.array.every(Number.isFinite));}});
+assert.equal(actor.root.userData.version,5);
+assert([...mats].some(m=>m.name==='Original face, no procedural iris replacement'&&m.map),'Original face texture must be bound');
+assert(![...mats].some(m=>m.isShaderMaterial),'No eye-erasing shader');
+await actor.ready;
+assert.equal(actor.failures.length,0);
+actor.dispose();
+console.log('Character v5: original texture binding, finite UVs, geometry animation and readiness verified.');

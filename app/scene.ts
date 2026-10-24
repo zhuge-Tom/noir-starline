@@ -7,9 +7,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-export type ViewMode='cinema'|'orbit'|'walk'|'close';
+export type ViewMode='cinema'|'orbit'|'walk'|'close'|'inspect';
 export type SceneOptions={wind:number;waves:number;stars:number;paused:boolean;reflections:boolean;quality:'high'|'low'};
-export type SceneAPI={setOptions:(o:SceneOptions)=>void;setView:(v:ViewMode)=>void;key:(k:string,v:boolean)=>void;setSuspended:(v:boolean)=>void;dispose:()=>void};
+export type SceneAPI={setHairVisible:(v:boolean)=>void;ready:Promise<void>;setOptions:(o:SceneOptions)=>void;setView:(v:ViewMode)=>void;key:(k:string,v:boolean)=>void;setSuspended:(v:boolean)=>void;dispose:()=>void};
 const v3=(x=0,y=0,z=0)=>new T.Vector3(x,y,z);
 function random(seed:number){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const mat=(color:number,metalness=.3,roughness=.48)=>new T.MeshStandardMaterial({color,metalness,roughness});
@@ -66,7 +66,7 @@ export function buildTrain(){
  // Exposed rear platform, ornamental railings, step, poles and canopy.
  box(root,3.7,.24,2.65,0,1.18,.22,floor);
  for(let i=0;i<12;i++)box(root,3.5,.023,.025,0,1.32,-.95+i*.21,trim);
- const railY=2.46;
+ const railY=2.67;
  rod(root,v3(-1.73,railY,1.55),v3(1.73,railY,1.55),.058,frame);
  for(const x of [-1.74,1.74]){
   rod(root,v3(x,railY,-1.05),v3(x,railY,1.55),.055,frame);
@@ -78,7 +78,7 @@ export function buildTrain(){
  }
  for(let i=0;i<11;i++){
   const x=-1.68+i*.336;rod(root,v3(x,1.35,1.55),v3(x,railY,1.55),.032,frame);
-  const pts=[];for(let j=0;j<22;j++){const a=j/21*Math.PI*2.5;const r=.105*(1-j/26);pts.push(v3(x+.12+Math.cos(a)*r,2.27+Math.sin(a)*r,1.55))}tube(root,pts,.018,frame);
+  const pts=[];for(let j=0;j<22;j++){const a=j/21*Math.PI*2.5;const r=.105*(1-j/26);pts.push(v3(x+.12+Math.cos(a)*r,2.48+Math.sin(a)*r,1.55))}tube(root,pts,.018,frame);
  }
  box(root,3.5,.10,.09,0,1.39,1.55,frame);box(root,2.8,.12,.55,0,.84,1.91,frame);box(root,2.55,.1,.4,0,.57,2.2,dark);
  for(let i=0;i<4;i++)box(root,2.7,.018,.022,0,.91,1.72+i*.11,trim);
@@ -106,9 +106,9 @@ function waterNormals(){const size=256,data=new Uint8Array(size*size*4);for(let 
 export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(text:string)=>void):SceneAPI{
  let options={...initial},mode:ViewMode='close',disposed=false,suspended=false,time=0,frames=0,statTime=0,firstFrame=true;
  const scene=new T.Scene();scene.fog=new T.FogExp2(0x111e48,.0027);
- const camera=new T.PerspectiveCamera(43,host.clientWidth/host.clientHeight,.06,650);camera.position.set(2.9,3.85,5.6);
+ const camera=new T.PerspectiveCamera(43,host.clientWidth/host.clientHeight,.06,650);camera.position.set(1.0,3.65,5.8);
  const renderer=new T.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setSize(host.clientWidth,host.clientHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.65));renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=.98;renderer.outputColorSpace=T.SRGBColorSpace;renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','拖动环绕，WASD 移动');host.appendChild(renderer.domElement);
- const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(0,2.6,.55);controls.enableDamping=true;controls.dampingFactor=.06;controls.minDistance=1.4;controls.maxDistance=85;controls.maxPolarAngle=Math.PI/2-.015;controls.update();
+ const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(0,2.82,.6);controls.enableDamping=true;controls.dampingFactor=.06;controls.minDistance=1.4;controls.maxDistance=85;controls.maxPolarAngle=Math.PI*.82;controls.update();
  scene.add(new T.HemisphereLight(0xa6b9ff,0x253b7c,1.1));const moon=new T.DirectionalLight(0xb4c3ff,1.45);moon.position.set(10,16,8);scene.add(moon);const blue=new T.DirectionalLight(0x5f79ed,1.2);blue.position.set(-8,5,-10);scene.add(blue);
  const sky=makeSky(scene),train=buildTrain(),character=buildDetailedCharacter();scene.add(train.root);train.root.add(character.root);
  const normals=waterNormals();const water=new Water(new T.PlaneGeometry(1100,1100),{textureWidth:1024,textureHeight:1024,waterNormals:normals,sunDirection:v3(-.4,.5,-1).normalize(),sunColor:0x778ace,waterColor:0x09132e,distortionScale:1.8,fog:true,alpha:1});water.rotation.x=-Math.PI/2;water.position.y=-.015;water.material.uniforms.size.value=3.8;
@@ -121,7 +121,7 @@ export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(te
  const composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));const bloom=new UnrealBloomPass(new T.Vector2(host.clientWidth,host.clientHeight),.22,.4,1.25);composer.addPass(bloom);composer.addPass(new OutputPass());
  const keys=new Set<string>(),forward=v3(),right=v3(),move=v3();let yaw=0,pitch=0,drag=false,lastX=0,lastY=0,walkDistance=10;
  let transition:{p:T.Vector3;t:T.Vector3}|null=null;
- const setView=(v:ViewMode)=>{mode=v;keys.clear();controls.enabled=v!=='walk';controls.autoRotate=false;drag=false;const presets={cinema:[v3(8.5,7.6,12),v3(-.5,2.15,-2.8)],orbit:[v3(13,7,15),v3(0,2,-8)],close:[v3(3.1,4.15,5.9),v3(0,2.6,.6)],walk:[v3(3.1,2.9,5.6),v3(0,2.5,.6)]};const[p,t]=presets[v];transition={p,t};if(v==='walk'){const d=t.clone().sub(p).normalize();yaw=Math.atan2(-d.x,-d.z);pitch=Math.asin(d.y);walkDistance=t.distanceTo(p)}renderer.domElement.focus({preventScroll:true})};
+ const setView=(v:ViewMode)=>{mode=v;keys.clear();controls.enabled=v!=='walk';controls.autoRotate=false;drag=false;const presets={inspect:[v3(.72,3.2,2.05),v3(0,3.59,.61)],cinema:[v3(8.5,7.6,12),v3(-.5,2.15,-2.8)],orbit:[v3(13,7,15),v3(0,2,-8)],close:[v3(1.0,3.65,5.8),v3(0,2.82,.6)],walk:[v3(3.1,2.9,5.6),v3(0,2.5,.6)]};const[p,t]=presets[v];transition={p,t};if(v==='walk'){const d=t.clone().sub(p).normalize();yaw=Math.atan2(-d.x,-d.z);pitch=Math.asin(d.y);walkDistance=t.distanceTo(p)}renderer.domElement.focus({preventScroll:true})};
  const onDown=(e:PointerEvent)=>{renderer.domElement.focus({preventScroll:true});if(mode==='cinema')controls.autoRotate=false;if(mode==='walk'){drag=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId)}};
  const onMove=(e:PointerEvent)=>{if(!drag||mode!=='walk')return;yaw-=(e.clientX-lastX)*.004;pitch=T.MathUtils.clamp(pitch-(e.clientY-lastY)*.004,-1.4,1.4);lastX=e.clientX;lastY=e.clientY};const onUp=()=>{drag=false};
  const isUI=(e:KeyboardEvent)=>(e.target instanceof HTMLElement)&&!!e.target.closest('button,input,[role="slider"],[role="dialog"]');
@@ -150,8 +150,9 @@ export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(te
   firstFrame=false;frames++;statTime+=dt;if(statTime>1.2){onStats(`${Math.round(frames/statTime)} FPS · ${options.quality==='high'?'高清':'流畅'}渲染`);frames=0;statTime=0}
  };
  animate();
- return{setOptions:updateOptions,setView,key:(k,v)=>{if(v){keys.add(k);transition=null}else keys.delete(k)},setSuspended:v=>{suspended=v;keys.clear()},dispose:()=>{disposed=true;cancelAnimationFrame(raf);observer.disconnect();controls.dispose();window.removeEventListener('keydown',onKey);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',onDown);renderer.domElement.removeEventListener('pointermove',onMove);renderer.domElement.removeEventListener('pointerup',onUp);renderer.domElement.removeEventListener('pointercancel',onUp);const geometries=new Set<T.BufferGeometry>(),materials=new Set<T.Material>();scene.traverse(o=>{const m=o as T.Mesh;if(m.geometry)geometries.add(m.geometry);if(m.material)(Array.isArray(m.material)?m.material:[m.material]).forEach(v=>materials.add(v))});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());character.dispose();normals.dispose();composer.dispose();bloom.dispose();renderer.dispose();renderer.domElement.remove()}};
+ return{setHairVisible:character.setHairVisible,ready:character.ready,setOptions:updateOptions,setView,key:(k,v)=>{if(v){keys.add(k);transition=null}else keys.delete(k)},setSuspended:v=>{suspended=v;keys.clear()},dispose:()=>{disposed=true;cancelAnimationFrame(raf);observer.disconnect();controls.dispose();window.removeEventListener('keydown',onKey);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',onDown);renderer.domElement.removeEventListener('pointermove',onMove);renderer.domElement.removeEventListener('pointerup',onUp);renderer.domElement.removeEventListener('pointercancel',onUp);const geometries=new Set<T.BufferGeometry>(),materials=new Set<T.Material>();scene.traverse(o=>{const m=o as T.Mesh;if(m.geometry)geometries.add(m.geometry);if(m.material)(Array.isArray(m.material)?m.material:[m.material]).forEach(v=>materials.add(v))});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());character.dispose();normals.dispose();composer.dispose();bloom.dispose();renderer.dispose();renderer.domElement.remove()}};
 }
+
 
 
 

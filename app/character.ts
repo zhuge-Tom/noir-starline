@@ -1,105 +1,100 @@
 import * as T from 'three';
+import { separateFaceAlbedo } from './face-albedo.ts';
+import { buildLayeredHair } from './layered-hair.ts';
+import { anatomicalHead } from './anatomical-head.ts';
+import { characterMaterial, shadeCharacter } from './character-shading.ts';
+import { ruffleBand, shoulderRuffle } from './character-garment.ts';
 const V=(x:number,y:number,z:number)=>new T.Vector3(x,y,z);
-/** Art-directed two-tone shading: scene light cannot burn out the passenger. */
-function cel(hex:number,shadow=0x171d38){return new T.ShaderMaterial({uniforms:{base:{value:new T.Color(hex)},shadow:{value:new T.Color(shadow)}},vertexShader:`varying vec3 vNormal;varying vec3 vView;void main(){vec4 p=modelViewMatrix*vec4(position,1.);vView=-p.xyz;vNormal=normalize(normalMatrix*normal);gl_Position=projectionMatrix*p;}`,fragmentShader:`uniform vec3 base;uniform vec3 shadow;varying vec3 vNormal;varying vec3 vView;void main(){vec3 n=normalize(vNormal);float d=dot(n,normalize(vec3(-.4,.8,1.)));float lit=smoothstep(-.2,.35,d);float rim=pow(1.-max(dot(n,normalize(vView)),0.),3.);vec3 c=mix(shadow,base,.42+lit*.48)+vec3(.05,.075,.13)*rim*.45;gl_FragColor=vec4(c,1.);#include <tonemapping_fragment>\n#include <colorspace_fragment>}`.replace(';#include',';\n#include'),side:T.DoubleSide})}
-function mesh(root:T.Group,geo:T.BufferGeometry,material:T.Material,pos=[0,0,0]){const m=new T.Mesh(geo,material);m.position.fromArray(pos);root.add(m);return m}
-function oval(root:T.Group,pos:number[],scale:number[],material:T.Material){const m=mesh(root,new T.SphereGeometry(1,32,24),material,pos);m.scale.fromArray(scale);return m}
-function curveMesh(root:T.Group,points:T.Vector3[],r:number,material:T.Material){return mesh(root,new T.TubeGeometry(new T.CatmullRomCurve3(points),36,r,7,false),material)}
-function limb(root:T.Group,points:T.Vector3[],radii:number[],material:T.Material){
- const path=new T.CatmullRomCurve3(points),frames=path.computeFrenetFrames(24,false),p:number[]=[],indices:number[]=[];
- for(let i=0;i<=24;i++){const t=i/24,c=path.getPoint(t),k=t*(radii.length-1),j=Math.min(radii.length-2,Math.floor(k)),r=T.MathUtils.lerp(radii[j],radii[j+1],k-j);for(let s=0;s<=12;s++){const a=s/12*Math.PI*2,q=c.clone().addScaledVector(frames.normals[i],r*Math.cos(a)).addScaledVector(frames.binormals[i],r*Math.sin(a));p.push(q.x,q.y,q.z);if(i<24&&s<12){const v=i*13+s;indices.push(v,v+13,v+1,v+1,v+13,v+14)}}}
- const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p,3));g.setIndex(indices);g.computeVertexNormals();return mesh(root,g,material);
-}
+const SCALE=470, CENTER=425, BASE=1450;
+const add=(g:T.Group,geo:T.BufferGeometry,m:T.Material|T.Material[],p=V(0,0,0))=>{const mesh=new T.Mesh(geo,m);mesh.position.copy(p);g.add(mesh);return mesh};
+function oval(g:T.Group,p:T.Vector3,size:T.Vector3,m:T.Material){const mesh=add(g,new T.SphereGeometry(1,40,32),m,p);mesh.scale.copy(size);return mesh}
+function tube(g:T.Group,ps:T.Vector3[],radius:number,m:T.Material){return add(g,new T.TubeGeometry(new T.CatmullRomCurve3(ps),36,radius,8,false),m)}
+function limb(g:T.Group,ps:T.Vector3[],rs:number[],m:T.Material){const curve=new T.CatmullRomCurve3(ps),frames=curve.computeFrenetFrames(32,false),pos:number[]=[],idx:number[]=[];for(let i=0;i<=32;i++){const t=i/32,k=t*(rs.length-1),j=Math.min(rs.length-2,Math.floor(k)),r=T.MathUtils.lerp(rs[j],rs[j+1],k-j),p=curve.getPoint(t);for(let a=0;a<=16;a++){const q=a/16*Math.PI*2,v=p.clone().addScaledVector(frames.normals[i],r*Math.cos(q)).addScaledVector(frames.binormals[i],r*Math.sin(q));pos.push(v.x,v.y,v.z);if(i<32&&a<16){const n=i*17+a;idx.push(n,n+17,n+1,n+1,n+17,n+18)}}}const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));geo.setIndex(idx);geo.computeVertexNormals();return add(g,geo,m)}
+/** Original artwork is projected onto shaped surfaces. No eye-erasing shader,
+ * no camera-facing billboard, and no generated replacement facial identity. */
 export function buildDetailedCharacter(){
- const root=new T.Group();root.name='NOIR passenger v2';root.position.set(0,1.32,.65);root.rotation.y=.08;
- const skin=cel(0xbeb2c5,0x635e7d),darkHair=cel(0x22283c,0x111728),hair=cel(0x353e55,0x171b2e),hairShine=cel(0x67728b,0x353b53),cloth=cel(0x28334d,0x10182c),clothLight=cel(0x3a4868,0x1d253e),lace=cel(0x8590a9,0x444c6b),leather=cel(0x1f283e,0x101426);
- // Slender legs and fitted boots, preserving the silhouette visible behind the railing.
+ const root=new T.Group();root.name='NOIR — original art calibrated 3D';root.position.set(0,1.32,.61);
+ const skin=characterMaterial(0xf1dcda,'skin'),hair=characterMaterial(0x454454,'hair'),collarMat=characterMaterial(0x9692a8,'cloth'),glove=characterMaterial(0x414259,'cloth'),silver=characterMaterial(0xb7bdd6,'metal');
+ const source=new T.Texture(),closed=new T.Texture(),atlas=new T.Texture();
+ for(const tex of [source,closed,atlas]){tex.colorSpace=T.SRGBColorSpace;tex.anisotropy=8;tex.magFilter=T.LinearFilter;tex.minFilter=T.LinearMipmapLinearFilter;tex.generateMipmaps=true}
+ let disposed=false,loaded=0;
+ const failures:string[]=[];
+ const ready=typeof window==='undefined'?Promise.resolve():Promise.all([
+  ['/character/noir-original.png',source],['/character/noir-closed.png',closed],['/character/noir-atlas.png',atlas]
+ ].map(([url,target])=>new Promise<void>((resolve,reject)=>{new T.ImageLoader().load(String(url),im=>{if(!disposed){const t=target as T.Texture;t.image=im;t.needsUpdate=true;loaded++}resolve()},undefined,()=>{failures.push(String(url));reject(new Error('角色原画载入失败：'+url))})}))).then(()=>{});
+ // Catch internally as well; scene exposes readiness and error to the UI.
+ ready.catch(()=>{});
+ const painted=new T.MeshBasicMaterial({map:source,color:0xd7d9e5,alphaTest:.35,toneMapped:false,side:T.DoubleSide});
+ const faceMat=painted.clone();faceMat.name='Original face, no procedural iris replacement';separateFaceAlbedo(faceMat);
+ shadeCharacter(painted,'cloth');
+ const uvSource=(x:number,y:number)=>[(CENTER+x*SCALE)/900,1-(BASE-y*SCALE)/1500];
+ // Five-head silhouette including ears, long shins/thighs, bare feet from the standing art.
  for(const s of [-1,1]){
-  limb(root,[V(s*.14,.12,.035),V(s*.145,.39,-.005),V(s*.15,.70,-.015),V(s*.13,.94,-.02)],[.05,.066,.07,.083],skin);
-  oval(root,[s*.14,.095,.065],[.079,.095,.155],leather);limb(root,[V(s*.14,.05,0),V(s*.14,.18,0),V(s*.145,.25,0)],[.06,.056,.064],leather);
-  curveMesh(root,[V(s*.20,.05,.12),V(s*.14,.04,.21),V(s*.07,.05,.12)],.008,clothLight);
+  limb(root,[V(s*.135,.105,.00),V(s*.132,.39,-.018),V(s*.15,.68,.007),V(s*.175,.92,.015),V(s*.16,1.17,0)],[.045,.069,.064,.087,.095],skin);
+  oval(root,V(s*.13,.085,.085),V(.058,.055,.13),skin);
+  for(let f=0;f<5;f++){const x=s*.13+(f-2)*.023;oval(root,V(x,.046,.183-Math.abs(f-1)*.012),V(.014,.023,.036),skin)}
  }
- // Sculpted torso with a narrow waist rather than primitive cylinders.
- const torsoPts=[new T.Vector2(.23,1.03),new T.Vector2(.205,1.11),new T.Vector2(.203,1.24),new T.Vector2(.247,1.38),new T.Vector2(.218,1.45)];
- const torso=mesh(root,new T.LatheGeometry(torsoPts,48),cloth);torso.scale.z=.69;
- const skirtGeo=new T.BufferGeometry(),skirtPos:number[]=[],skirtUV:number[]=[],indices:number[]=[];
- for(let y=0;y<=20;y++){const t=y/20;for(let j=0;j<=128;j++){const a=j/128*Math.PI*2,fold=Math.sin(a*16)*.025*Math.pow(t,1.4)+Math.sin(a*32)*.008*t,r=.215+.33*Math.pow(t,.8)+fold;skirtPos.push(Math.sin(a)*r,1.065-t*.67,Math.cos(a)*r*.86);skirtUV.push(j/128,t);if(y<20&&j<128){const k=y*129+j;indices.push(k,k+129,k+1,k+1,k+129,k+130)}}}
- skirtGeo.setAttribute('position',new T.Float32BufferAttribute(skirtPos,3));skirtGeo.setAttribute('uv',new T.Float32BufferAttribute(skirtUV,2));skirtGeo.setIndex(indices);skirtGeo.computeVertexNormals();mesh(root,skirtGeo,cloth);const baseSkirt=Float32Array.from(skirtPos);
- // A scalloped, double-layer petticoat follows the skirt instead of a torus hoop.
- const trimGeo=new T.BufferGeometry(),trimPos:number[]=[],trimIndices:number[]=[];
- for(let j=0;j<=192;j++){const a=j/192*Math.PI*2,r=.55+.012*Math.cos(a*24);for(let row=0;row<2;row++){trimPos.push(Math.sin(a)*(r+row*.028),.405-row*(.07+.012*Math.sin(a*24)),Math.cos(a)*(r+row*.028)*.86)}if(j<192){const k=j*2;trimIndices.push(k,k+1,k+2,k+1,k+3,k+2)}}trimGeo.setAttribute('position',new T.Float32BufferAttribute(trimPos,3));trimGeo.setIndex(trimIndices);trimGeo.computeVertexNormals();mesh(root,trimGeo,lace);const baseTrim=Float32Array.from(trimPos);
- // Neck, high ruffled collar, sleeveless blouse and small dark bow.
- limb(root,[V(0,1.41,0),V(0,1.57,0)],[.077,.078],skin);
- const collar=mesh(root,new T.CylinderGeometry(.09,.2,.19,40,1,true),lace,[0,1.48,0]);collar.scale.z=.77;
- for(let j=0;j<24;j++){const a=j/24*Math.PI*2;oval(root,[Math.sin(a)*.184,1.40,Math.cos(a)*.143],[.029,.046,.024],lace)}
+ const deformables:{geo:T.BufferGeometry;base:Float32Array;kind:'cloth'|'hair';phase:number;weight:number}[]=[];
+ // Continuous fitted bodice and flared skirt, front UVs preserve original seams and shading.
+ const profiles=[[1.055,.487,.235],[1.10,.48,.225],[1.3,.392,.20],[1.5,.286,.155],[1.65,.219,.132],[1.81,.219,.127],[1.99,.252,.124],[2.05,.199,.11]];
+ const p:number[]=[],u:number[]=[],ix:number[]=[],groups:{start:number;count:number;materialIndex:number}[]=[];
+ const rows=48,cols=96;
+ const profile=(y:number)=>{let j=0;while(j<profiles.length-2&&y>profiles[j+1][0])j++;const t=T.MathUtils.clamp((y-profiles[j][0])/(profiles[j+1][0]-profiles[j][0]),0,1);return[T.MathUtils.lerp(profiles[j][1],profiles[j+1][1],t),T.MathUtils.lerp(profiles[j][2],profiles[j+1][2],t)]};
+ for(let i=0;i<=rows;i++){const y=1.055+i/rows*.995,[r,d]=profile(y);for(let j=0;j<=cols;j++){const a=j/cols*Math.PI*2,fall=T.MathUtils.smoothstep(1.70-y,0,.65),fold=1+fall*(.043*Math.cos(a*12+.32*Math.sin(a*3))+.012*Math.sin(a*7)),x=Math.sin(a)*r*fold,z=Math.cos(a)*d*fold,hemLift=Math.pow(fall,5)*(.009*Math.sin(a*5)+.006*Math.cos(a*9));p.push(x,y+hemLift,z);u.push(...uvSource(x,y));if(i<rows&&j<cols){const k=i*(cols+1)+j,start=ix.length;ix.push(k,k+1,k+cols+1,k+1,k+cols+2,k+cols+1);groups.push({start,count:6,materialIndex:Math.cos(a)>0?0:1})}}}
+ const dressGeo=new T.BufferGeometry();dressGeo.setAttribute('position',new T.Float32BufferAttribute(p,3));dressGeo.setAttribute('uv',new T.Float32BufferAttribute(u,2));dressGeo.setIndex(ix);const frontIx:number[]=[],backIx:number[]=[];for(const g of groups)(g.materialIndex===0?frontIx:backIx).push(...ix.slice(g.start,g.start+g.count));dressGeo.setIndex([...frontIx,...backIx]);dressGeo.addGroup(0,frontIx.length,0);dressGeo.addGroup(frontIx.length,backIx.length,1);dressGeo.computeVertexNormals();
+ const garment=characterMaterial(0xffffff,'cloth');garment.vertexColors=true;garment.name='Clean garment — no body artwork';
+ const garmentColors:number[]=[];for(let i=0;i<p.length;i+=3){const x=p[i],y=p[i+1],z=p[i+2],a=Math.atan2(x,z),c=new T.Color(y>1.91?0x9692a8:0x505572);const folds=.76+.22*Math.pow(.5+.5*Math.cos(a*12+.32*Math.sin(a*3)),1.5),bibShadow=1-.16*Math.exp(-Math.pow((y-1.88)/.045,2)),hemShadow=1-.12*Math.exp(-Math.pow((y-1.065)/.035,2));c.multiplyScalar(folds*bibShadow*hemShadow);garmentColors.push(c.r,c.g,c.b)}
+ dressGeo.setAttribute('color',new T.Float32BufferAttribute(garmentColors,3));dressGeo.clearGroups();add(root,dressGeo,garment).name='Clean fitted dress';
+ // Separate scalloped bib trim and buttons, rather than baked arms/hair/necklace.
+ const bibTrim=ruffleBand(1.928,.237,.14,.065,22,collarMat);bibTrim.name='Folded bib ruffle';root.add(bibTrim);
+ for(let i=0;i<3;i++)oval(root,V(.008,1.965-i*.025,.144),V(.006,.006,.004),silver);
+deformables.push({geo:dressGeo,base:Float32Array.from(p),kind:'cloth',phase:0,weight:1});
+ // Soft scalloped hem; no toy-like torus hoop.
+ const underskirt=ruffleBand(1.075,.489,.239,.074,26,characterMaterial(0x75758f,'cloth'));underskirt.name='Folded underskirt';root.add(underskirt);
+ const hg=underskirt.geometry;deformables.push({geo:hg,base:Float32Array.from(hg.attributes.position.array),kind:'cloth',phase:0,weight:1});
+ // Neck is a real tapered volume, seated behind the chin and inside the torso.
+ const neck=limb(root,[V(.012,1.99,-.01),V(.015,2.075,.002),V(.018,2.185,.016)],[.089,.065,.067],skin);neck.name='Anatomical neck';
+ // Continuous fabric collar: no source face/neck pixels projected onto this geometry.
+ const collar=add(root,new T.CylinderGeometry(.072,.093,.09,64,4,true),collarMat,V(.014,2.055,.002));collar.name='Fitted fabric collar';collar.scale.z=.88;
+ const neckTrim=ruffleBand(2.115,.073,.064,.021,18,collarMat);neckTrim.position.set(.014,0,.002);neckTrim.name='Folded neck trim';root.add(neckTrim);
+ // Hands rest on the video railing; their bone lengths now match the standing reference.
  for(const s of [-1,1]){
-  // Smooth shoulder-to-elbow-to-wrist taper, with hands resting on the rear rail.
-  limb(root,[V(s*.222,1.385,0),V(s*.259,1.25,.035),V(s*.263,1.105,.19)],[.067,.059,.049],skin);
-  limb(root,[V(s*.263,1.105,.19),V(s*.233,1.09,.41),V(s*.175,1.105,.72)],[.05,.044,.034],skin);
-  limb(root,[V(s*.181,1.10,.63),V(s*.174,1.10,.705)],[.048,.046],clothLight);
-  oval(root,[s*.168,1.105,.744],[.065,.04,.076],leather);
-  for(let f=0;f<4;f++){const x=s*.168+(f-1.5)*.025;limb(root,[V(x,1.11,.76),V(x,1.09,.80),V(x,1.045,.807)],[.011,.010,.0075],leather)}
-  limb(root,[V(s*.22,1.105,.73),V(s*.224,1.08,.785),V(s*.209,1.045,.79)],[.015,.013,.009],leather);
-  for(let j=0;j<7;j++){const a=j/6*Math.PI;oval(root,[s*(.21+.066*Math.cos(a)),1.39+.048*Math.sin(a),.016],[.031,.035,.055],lace)}
-  const b=oval(root,[s*.073,1.38,.172],[.078,.04,.025],clothLight);b.rotation.z=s*.3;
-  curveMesh(root,[V(s*.025,1.37,.18),V(s*.03,1.28,.18),V(s*.065,1.2,.17)],.013,clothLight);
+  oval(root,V(s*.304,1.995,.008),V(.064,.068,.061),skin).name=`Rounded shoulder ${s}`;
+  // One continuous surface avoids a lit ring where separate elbow tubes met.
+  limb(root,[V(s*.305,2.012,0),V(s*.35,1.82,.035),V(s*.35,1.61,.18),V(s*.286,1.46,.39),V(s*.154,1.34,.74)],[.063,.057,.049,.041,.033],skin).name=`Upper arm ${s}`;
+  limb(root,[V(s*.176,1.364,.668),V(s*.155,1.337,.743)],[.046,.043],glove);
+  oval(root,V(s*.145,1.338,.773),V(.058,.035,.073),glove);
+  for(let f=0;f<4;f++){const x=s*.145+(f-1.5)*.022;limb(root,[V(x,1.346,.78),V(x,1.32,.823),V(x,1.281,.824)],[.010,.009,.007],glove)}
+  root.add(shoulderRuffle(s,collarMat));
+  const cuff=ruffleBand(1.37,.047,.044,.025,12,glove);cuff.position.set(s*.166,0,.707);cuff.name=`Gathered glove cuff ${s}`;root.add(cuff);
+  limb(root,[V(s*.196,1.348,.767),V(s*.215,1.326,.797),V(s*.205,1.30,.812)],[.014,.012,.009],glove).name=`Gloved thumb ${s}`;
  }
- oval(root,[0,1.38,.197],[.022,.026,.012],hairShine);
- const head=new T.Group();head.position.set(0,1.775,.015);root.add(head);
- // Anime jaw: round cranium, tapered cheeks and a delicate chin, not a sphere face.
- const headGeo=new T.SphereGeometry(1,64,48);const hp=headGeo.attributes.position;
- for(let i=0;i<hp.count;i++){const x=hp.getX(i),y=hp.getY(i),z=hp.getZ(i),jaw=y<-.2?1-(-y-.2)*.30:1;hp.setXYZ(i,x*.294*jaw,y*.321,z*.238)}headGeo.computeVertexNormals();mesh(head,headGeo,skin,[0,0,.022]);
- oval(head,[0,.043,-.043],[.324,.355,.275],darkHair);
- const faceGeo=new T.BufferGeometry(),fp:number[]=[],fu:number[]=[],fi:number[]=[];
- for(let y=0;y<=48;y++){const lat=y/48*Math.PI;for(let j=0;j<=64;j++){const a=-Math.PI/2+j/64*Math.PI,ny=Math.cos(lat),jaw=ny<-.2?1-(-ny-.2)*.30:1,x=Math.sin(a)*Math.sin(lat)*.295*jaw,yy=ny*.322,z=Math.cos(a)*Math.sin(lat)*.247+.035;fp.push(x,yy,z);fu.push(x/.67+.5,yy/.73+.5);if(y<48&&j<64){const k=y*65+j;fi.push(k,k+1,k+65,k+1,k+66,k+65)}}}
- faceGeo.setAttribute('position',new T.Float32BufferAttribute(fp,3));faceGeo.setAttribute('uv',new T.Float32BufferAttribute(fu,2));faceGeo.setIndex(fi);faceGeo.computeVertexNormals();
- const faceMaterial=new T.MeshBasicMaterial({color:0xc4bfd4,side:T.DoubleSide,toneMapped:false});
- const face=mesh(head,faceGeo,faceMaterial);face.name='Detailed hand-painted facial albedo';
- const blink={value:1};
- faceMaterial.onBeforeCompile=shader=>{shader.uniforms.blink=blink;shader.fragmentShader='uniform float blink;\n'+shader.fragmentShader;shader.fragmentShader=shader.fragmentShader.replace('#include <map_fragment>',`#ifdef USE_MAP
- vec2 faceUv=vMapUv;float eyeCenter=.54;float eyeMask=step(.17,faceUv.x)*step(faceUv.x,.83)*step(.395,faceUv.y)*step(faceUv.y,.65);
- if(eyeMask>.5){float dy=faceUv.y-eyeCenter;float halfEye=.103*blink;if(abs(dy)<halfEye){faceUv.y=eyeCenter+dy/max(blink,.035);}else if(abs(dy)<.108){faceUv.y=.35;}}
- vec4 sampledDiffuseColor=texture2D(map,faceUv);diffuseColor*=sampledDiffuseColor;
- #endif`)};
- // Fallback facial planes are replaced after the detailed diffuse asset loads.
- const fallback=new T.Group();head.add(fallback);for(const s of [-1,1]){
-  const ink=new T.MeshBasicMaterial({color:0x28233e,toneMapped:false});const eyeMat=new T.MeshBasicMaterial({color:0x706384,toneMapped:false});const e=oval(fallback,[s*.122,.02,.269],[.06,.082,.018],eyeMat);e.rotation.y=s*.13;oval(fallback,[s*.119,.035,.286],[.027,.051,.007],ink);oval(fallback,[s*.131,.068,.294],[.012,.017,.004],new T.MeshBasicMaterial({color:0xc5c2d5,toneMapped:false}));curveMesh(fallback,[V(s*.065,.07,.266),V(s*.12,.10,.28),V(s*.19,.074,.25)],.006,ink);
+ // Fine necklace and the character's cross pendant.
+ tube(root,[V(-.077,2.03,.135),V(-.059,1.86,.15),V(0,1.70,.166),V(.06,1.86,.15),V(.075,2.03,.135)],.0028,silver);
+ add(root,new T.BoxGeometry(.013,.09,.009),silver,V(0,1.654,.177));add(root,new T.BoxGeometry(.048,.013,.009),silver,V(0,1.68,.18));
+ const head=new T.Group();head.position.set(0,2.325,0);head.name='Original proportion head';root.add(head);
+ // Geometry owns the head shape. Original artwork supplies front albedo only.
+ head.add(anatomicalHead(faceMat,skin,hair));
+ for(const side of [-1,1]){
+  const x0=side<0?-.16:.19,x1=side<0?-.345:.385,x2=side<0?-.265:.29;
+  const points=[V(x0,.205,.035),V(x1,.31,.015),V(x2,.195,.045)];
+  const ep:number[]=[],eu:number[]=[],ei=[0,1,2,5,4,3,0,3,1,1,3,4,1,4,2,2,4,5,2,5,0,0,5,3];
+  for(let layer=0;layer<2;layer++)for(const v of points){ep.push(v.x,v.y,v.z-layer*.045);eu.push((425+v.x*470)/900,1-(1450-(v.y+2.325)*470)/1500)}
+  const eg=new T.BufferGeometry();eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));eg.setAttribute('uv',new T.Float32BufferAttribute(eu,2));eg.setIndex(ei);eg.computeVertexNormals();add(head,eg,hair);const ef=eg.clone();ef.setIndex([0,1,2]);add(head,ef,painted,V(0,0,.001));
  }
- curveMesh(fallback,[V(-.019,-.169,.249),V(0,-.173,.255),V(.019,-.169,.249)],.003,new T.MeshBasicMaterial({color:0x8e687e}));
- let faceTexture:T.Texture|undefined;
- if(typeof window!=='undefined')new T.TextureLoader().load('/face-albedo-v2.png',tex=>{faceTexture=tex;tex.colorSpace=T.SRGBColorSpace;tex.anisotropy=4;faceMaterial.map=tex;faceMaterial.needsUpdate=true;fallback.visible=false},undefined,()=>{});
- // Rounded cat ears, with inset surfaces and subtle edge piping.
- for(const s of [-1,1]){
-  const shape=new T.Shape();shape.moveTo(s*.115,.23);shape.quadraticCurveTo(s*.24,.41,s*.371,.475);shape.quadraticCurveTo(s*.378,.26,s*.291,.14);shape.closePath();mesh(head,new T.ExtrudeGeometry(shape,{depth:.105,bevelEnabled:true,bevelThickness:.022,bevelSize:.015,bevelSegments:3}),darkHair, [0,0,-.04]);
-  const inner=new T.Shape();inner.moveTo(s*.20,.265);inner.lineTo(s*.334,.411);inner.quadraticCurveTo(s*.34,.28,s*.287,.219);inner.closePath();mesh(head,new T.ShapeGeometry(inner),hair,[0,0,.089]);
-  curveMesh(head,[V(s*.16,.26,.085),V(s*.25,.375,.084),V(s*.37,.47,.044)],.0045,hairShine);
- }
- type Lock={g:T.BufferGeometry;base:Float32Array;phase:number;flow:number;highlight:boolean};const locks:Lock[]=[];
- const strand=(parent:T.Group,pts:T.Vector3[],width:number,phase:number,flow:number,highlight=false)=>{
-  const path=new T.CatmullRomCurve3(pts),ps:number[]=[],idx:number[]=[],seg=36,across=6;
-  for(let j=0;j<=seg;j++){const t=j/seg,c=path.getPoint(t),tangent=path.getTangent(t),side=V(0,0,1).cross(tangent).normalize();const taper=Math.pow(Math.sin(Math.PI*(.08+t*.92)),.67),w=width*taper;
-   for(let k=0;k<=across;k++){const q=k/across*2-1;ps.push(c.x+side.x*w*q,c.y+side.y*w*q,c.z+side.z*w*q+.012*(1-q*q)*taper);if(j<seg&&k<across){const a=j*(across+1)+k;idx.push(a,a+1,a+across+1,a+1,a+across+2,a+across+1)}}}
-  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(ps,3));g.setIndex(idx);g.computeVertexNormals();mesh(parent,g,highlight?hairShine:phase%4===0?hair:darkHair);locks.push({g,base:Float32Array.from(ps),phase,flow,highlight});
+ const hairstyle=buildLayeredHair(atlas);head.add(hairstyle.root);
+ // Long cat tail, absent in the old proxy.
+ const tail=tube(root,[V(.06,1.24,-.14),V(.31,.99,-.28),V(.52,.71,-.22),V(.62,.57,-.1)],.025,hair);tail.name='Cat tail';
+ let prev=-1,prevWind=-1;
+ const animate=(time:number,wind:number)=>{if(time===prev&&wind===prevWind)return;prev=time;prevWind=wind;
+  const blinkPhase=(time+2.6)%5.4;faceMat.map=blinkPhase<.13&&loaded===3?closed:source;
+  hairstyle.animate(time,wind);
+  head.rotation.z=Math.sin(time*.42)*.012;head.rotation.y=Math.sin(time*.33)*.035;head.position.y=2.325+Math.sin(time*1.45)*.003;root.rotation.z=Math.sin(time*.64)*.003;tail.rotation.y=Math.sin(time*.8)*.055;
+  for(const {geo,base,kind,phase,weight} of deformables){const a=geo.attributes.position;for(let i=0;i<a.count;i++){const k=i*3,x=base[k],y=base[k+1],z=base[k+2];if(kind==='hair'){const fall=T.MathUtils.clamp((2.45-y)/1.45,0,1),w=wind*weight*fall*fall;a.setXYZ(i,x+(.085+Math.sin(time*1.3+phase*.21+y*2)*.045)*w,y+Math.sin(time*1.15+phase*.24)*.018*w,z+Math.sin(time*1.22+phase*.19+y*2)*.028*w)}else{const fall=Math.max(0,(1.7-y)/.7),w=fall*fall*wind;a.setXYZ(i,x+Math.sin(time*1.4+x*4)*.016*w,y+Math.sin(time*1.3+x*5)*.004*w,z+Math.sin(time*1.35+x*5)*.013*w)}}if(kind==='hair'){head.updateMatrix();const v=V(0,0,0);for(let i=0;i<a.count;i++){const y=base[i*3+1],blend=T.MathUtils.smoothstep(y,1.98,2.38);if(blend>0){v.fromBufferAttribute(a,i);const original=v.clone();v.sub(head.position).applyEuler(head.rotation).add(head.position);v.lerp(original,1-blend);a.setXYZ(i,v.x,v.y,v.z)}}}a.needsUpdate=true}
  };
- // Bangs descend in tapered overlapping blades, not flat spiky sticks.
- for(let i=0;i<13;i++){const x=(i-6)*.042,edge=Math.abs(i-6)/6,endY=.075-edge*.16+(i%3)*.018;
-  strand(head,[V(x*.45,.333,.112),V(x*.82,.235,.235),V(x,.137,.266),V(x*.98,endY,.29)],.036,i,0.1);
-  if(i%2===0)strand(head,[V(x*.67,.284,.213),V(x*.9,.213,.264),V(x*.98,.156,.28)],.003,i,.1,true);
- }
- for(const s of [-1,1])for(let i=0;i<5;i++)strand(head,[V(s*.245,.225,.09-i*.04),V(s*(.30+i*.004),.055,.143-i*.039),V(s*(.304+i*.009),-.20,.15-i*.03),V(s*.235,-.34-i*.014,.19-i*.03)],.030,i+25,.2);
- // Dense layered long hair, with thin silhouette flyaways.
- for(let i=0;i<38;i++){const a=i/37*Math.PI,xx=Math.cos(a)*.28,zz=-.075-Math.sin(a)*.22,off=(i%5)*.025;
-  strand(root,[V(xx,2.02,zz),V(xx*1.06,1.7,zz-.03),V(xx+.08,1.29,zz-.11),V(xx+.38,.99+off,zz-.19),V(xx+.76,1.02+off,zz-.29),V(xx+.84,1.17+off,zz-.3)],.020+(i%4)*.008,i,1);
-  if(i%4===0)strand(root,[V(xx+.015,1.78,zz+.012),V(xx+.07,1.38,zz-.08),V(xx+.36,1.08+off,zz-.168),V(xx+.70,1.10+off,zz-.267)],.0028,i+1,1,true);
- }
- for(let i=0;i<9;i++)strand(root,[V(.1,1.98,-.16),V(.33,1.56+i*.026,-.26),V(.7,1.53+i*.016,-.27),V(1.02+i*.023,1.68+i*.018,-.25)],.0045,i+81,1.4,true);
- let lastTime=-1,lastWind=-1;
- const animate=(time:number,wind:number)=>{
-  if(time===lastTime&&wind===lastWind)return;lastTime=time;lastWind=wind;
-  root.rotation.z=Math.sin(time*.64)*.006;head.rotation.z=Math.sin(time*.5)*.018;head.rotation.y=Math.sin(time*.35)*.05;
-  const t=time%5.3;blink.value=t<.17?Math.max(.035,Math.abs(t-.085)/.085):1;fallback.scale.y=blink.value;
-  locks.forEach(({g,base,phase,flow})=>{const p=g.attributes.position;for(let i=0;i<p.count;i++){const t=Math.floor(i/7)/36,w=t*t*wind*flow,k=i*3;p.setXYZ(i,base[k]+Math.sin(time*1.75+phase*.23+t*5)*.065*w,base[k+1]+Math.sin(time*1.5+phase*.14+t*4)*.037*w,base[k+2]+Math.cos(time*1.55+phase*.25+t*5)*.045*w)}p.needsUpdate=true;g.computeVertexNormals()});
-  const deform=(g:T.BufferGeometry,base:Float32Array)=>{const p=g.attributes.position;for(let i=0;i<p.count;i++){const k=i*3,x=base[k],y=base[k+1],z=base[k+2],fall=Math.max(0,(1.065-y)/.74),a=Math.atan2(z,x),f=1+.025*fall*wind*Math.sin(time*1.8+a*3);p.setXYZ(i,x*f+.023*fall*wind*Math.sin(time*1.4),y+.008*fall*wind*Math.sin(time*2+a*4),z*f)}p.needsUpdate=true;g.computeVertexNormals()};deform(skirtGeo,baseSkirt);deform(trimGeo,baseTrim);
- };
- return{root,animate,dispose:()=>faceTexture?.dispose()};
+ root.traverse(obj=>{if(obj instanceof T.Mesh&&(obj.material===skin||(Array.isArray(obj.material)&&obj.material.includes(skin)))){const geo=obj.geometry,n=geo.attributes.normal,colors:number[]=[];for(let i=0;i<n.count;i++){const f=.92+.08*Math.max(0,n.getX(i)*-.3+n.getY(i)*.5+n.getZ(i)*.7);colors.push(f,f,f)}geo.setAttribute('color',new T.Float32BufferAttribute(colors,3));skin.vertexColors=true}});
+ root.userData={version:5,polishVersion:6,source:'supplied original standing artwork and Live2D texture atlas',height:2.74,representation:'anatomical volumes, bounded night cel shading, folded cloth and original face; unseen details approximate',eyeShader:'original eye pixels preserved; baked hair excluded'};
+ return{root,animate,ready,failures,setHairVisible:(visible:boolean)=>{hairstyle.root.visible=visible},dispose:()=>{disposed=true;source.dispose();closed.dispose();atlas.dispose()}};
 }
+
+
