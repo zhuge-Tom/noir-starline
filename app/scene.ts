@@ -1,6 +1,9 @@
 import * as T from 'three';
+import {TRAIN_WIDTH_SCALE,TRAVEL_SPEED,constrainWalk,buildPassingScenery} from './train-journey.ts';
+import { createCarriageDoor } from './carriage-door.ts';
 import { batchStatic } from './batching.ts';
 import { buildDetailedCharacter } from './character.ts';
+import { buildCarriageInterior, interiorPalette } from './carriage-interior.ts';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Water } from 'three/addons/objects/Water.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -9,7 +12,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 export type ViewMode='cinema'|'orbit'|'walk'|'close'|'inspect';
 export type SceneOptions={wind:number;waves:number;stars:number;paused:boolean;reflections:boolean;quality:'high'|'low'};
-export type SceneAPI={setHairVisible:(v:boolean)=>void;ready:Promise<void>;setOptions:(o:SceneOptions)=>void;setView:(v:ViewMode)=>void;key:(k:string,v:boolean)=>void;setSuspended:(v:boolean)=>void;dispose:()=>void};
+export type SceneAPI={toggleDoor:()=>string;setHairVisible:(v:boolean)=>void;ready:Promise<void>;setOptions:(o:SceneOptions)=>void;setView:(v:ViewMode)=>void;key:(k:string,v:boolean)=>void;setSuspended:(v:boolean)=>void;dispose:()=>void};
 const v3=(x=0,y=0,z=0)=>new T.Vector3(x,y,z);
 function random(seed:number){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const mat=(color:number,metalness=.3,roughness=.48)=>new T.MeshStandardMaterial({color,metalness,roughness});
@@ -20,34 +23,38 @@ function rod(g:T.Group,a:T.Vector3,b:T.Vector3,r:number,m:T.Material,r2=r){const
 export function buildTrain(){
  const root=new T.Group();root.name='Night train';
  const body=mat(0x101a3c,.65,.34),frame=mat(0x36436a,.7,.32),dark=mat(0x080f22,.7,.5),trim=mat(0x7d81a8,.65,.3),floor=mat(0x20283f,.3,.6),gold=mat(0xaca185,.65,.35);
- const glass=new T.MeshStandardMaterial({color:0xffe2a2,emissive:0xffd69b,emissiveIntensity:2.1,roughness:.25});
+ const glass=new T.MeshBasicMaterial({color:0xa4bbce,transparent:true,opacity:.12,depthWrite:false,side:T.DoubleSide});
+ const interiors=interiorPalette();
  const wheels:T.Group[]=[];
  for(let car=0;car<3;car++){
   const z=-7.5-car*14.4,g=new T.Group();g.position.z=z;root.add(g);g.name=`carriage-${car}`;
-  box(g,3.6,.35,13,0,1.13,0,dark);box(g,3.4,1.35,12.6,0,1.92,0,body);
+  box(g,3.6,.35,13,0,1.13,0,dark);
+  for(const s of [-1,1])box(g,.16,1.35,12.6,s*1.65,1.92,0,body);
+  g.add(buildCarriageInterior(car,interiors));
   for(const side of [-1,1]){
    box(g,.17,.62,12.6,side*1.7,4.15,0,body);
    for(let i=0;i<7;i++)box(g,.2,1.65,.43,side*1.7,3.1,-6.1+i*2.03,body);
    for(let i=0;i<6;i++){
     const zz=-5.09+i*2.03;
-    box(g,.13,1.44,1.59,side*1.705,3.12,zz,frame);
+    for(const dz of [-.795,.795])box(g,.13,1.44,.07,side*1.705,3.12,zz+dz,frame);
+    for(const yy of [2.40,3.84])box(g,.13,.07,1.66,side*1.705,yy,zz,frame);
     box(g,.145,1.25,1.42,side*1.79,3.15,zz,glass);
     box(g,.17,.065,1.46,side*1.81,3.05,zz,frame);
     box(g,.18,.09,1.62,side*1.8,2.46,zz,trim);
-    box(g,.05,.95,.11,side*1.88,3.23,zz-.57,gold);
+
    }
    for(const yy of [1.44,2.18,4.38])box(g,.04,.035,12.64,side*1.8,yy,0,trim);
    for(let s=0;s<38;s++)for(const yy of [1.53,4.27])ellipsoid(g,side*1.81,yy,-6.1+s*.33,.025,.025,.025,trim);
   }
   // Curved coach roof, not a flat placeholder box.
-  const shape=new T.Shape();shape.moveTo(-1.88,0);shape.quadraticCurveTo(-1.88,.74,0,.83);shape.quadraticCurveTo(1.88,.74,1.88,0);shape.lineTo(-1.88,0);
+  const shape=new T.Shape();shape.moveTo(-1.88,0);shape.quadraticCurveTo(-1.88,.74,0,.83);shape.quadraticCurveTo(1.88,.74,1.88,0);shape.lineTo(1.76,0);shape.quadraticCurveTo(1.76,.63,0,.71);shape.quadraticCurveTo(-1.76,.63,-1.76,0);shape.closePath();
   const roof=new T.Mesh(new T.ExtrudeGeometry(shape,{depth:13,bevelEnabled:false,curveSegments:20}),dark);roof.position.set(0,4.46,-6.5);g.add(roof);
   for(let j=0;j<5;j++)box(g,.68,.16,.65,0,5.3,-4.6+j*2.3,frame);
   for(const end of [-1,1]){
    box(g,1.07,3.07,.16,-1.17,2.93,end*6.32,body);box(g,1.07,3.07,.16,1.17,2.93,end*6.32,body);
-   box(g,1.28,.38,.17,0,4.25,end*6.33,frame);box(g,1.22,2.7,.10,0,2.71,end*6.34,floor);
-   box(g,.75,.94,.035,0,3.35,end*6.42,new T.MeshStandardMaterial({color:0x444b67,emissive:0x4b537a,emissiveIntensity:.18}));
-   rod(g,v3(.43,2.4,end*6.46),v3(.43,2.7,end*6.46),.036,gold);
+   box(g,1.28,.38,.17,0,4.25,end*6.33,frame);
+   for(const s of [-1,1])box(g,.045,2.65,.19,s*.62,2.73,end*6.33,gold);
+   if(car===2&&end===-1){box(g,1.22,2.65,.10,0,2.73,end*6.34,interiors.wood);box(g,.68,.75,.04,0,3.25,end*6.27,frame);}
   }
   for(const zz of [-4.25,4.25]){
    box(g,2.75,.28,2.25,0,.63,zz,dark);
@@ -61,7 +68,7 @@ export function buildTrain(){
     }
    }
   }
-  if(car<2){box(g,2.65,2.7,1.55,0,2.7,-7,dark);for(let a=0;a<9;a++){box(g,2.8,.06,.08,0,4.1,-6.5-a*.13,frame);for(const x of [-1.36,1.36])box(g,.04,2.65,.04,x,2.7,-6.5-a*.13,frame)}}
+  if(car<2){box(g,2.65,.10,1.9,0,1.39,-7.2,dark);box(g,2.65,.10,1.9,0,4.12,-7.2,dark);for(const s of [-1,1])box(g,.08,2.7,1.9,s*1.32,2.7,-7.2,dark);for(let a=0;a<9;a++){box(g,2.8,.06,.08,0,4.1,-6.5-a*.13,frame);for(const x of [-1.36,1.36])box(g,.04,2.65,.04,x,2.7,-6.5-a*.13,frame)}}
  }
  // Exposed rear platform, ornamental railings, step, poles and canopy.
  box(root,3.7,.24,2.65,0,1.18,.22,floor);
@@ -88,7 +95,11 @@ export function buildTrain(){
  }
  const lamp=new T.PointLight(0x91a8de,2.4,7,2);lamp.position.set(.2,4.3,.7);root.add(lamp);
  const fill=new T.PointLight(0xffd99b,3,6,2);fill.position.set(-2.2,3,-3);root.add(fill);
- wheels.forEach(w=>batchStatic(w));batchStatic(root,wheels);return{root,wheels};
+ const doors=[-1.18,-15.58,-29.98].map(z=>createCarriageDoor(z,interiors));doors.forEach(d=>root.add(d.root));
+ wheels.forEach(w=>batchStatic(w));batchStatic(root,[...wheels,...doors.map(d=>d.root)]);const coaches=new T.Group();coaches.name='Widened carriages';
+ for(const child of root.children.slice())coaches.add(child);
+ coaches.scale.x=TRAIN_WIDTH_SCALE;root.add(coaches);
+ return{root,wheels,doors};
 }
 function makeSky(scene:T.Scene){
  const skyMat=new T.ShaderMaterial({side:T.BackSide,depthWrite:false,uniforms:{brightness:{value:.8}},vertexShader:`varying vec3 vDirection;void main(){vDirection=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,fragmentShader:`varying vec3 vDirection;uniform float brightness;
@@ -103,7 +114,7 @@ function makeSky(scene:T.Scene){
  const material=new T.ShaderMaterial({transparent:true,depthWrite:false,vertexColors:true,blending:T.AdditiveBlending,uniforms:{time:{value:0},brightness:{value:.8},pixelRatio:{value:1}},vertexShader:`attribute float aSize;attribute float phase;uniform float time;uniform float pixelRatio;varying float alpha;varying vec3 vColor;void main(){vColor=color;alpha=.65+.35*sin(time*.7+phase);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);gl_PointSize=aSize*pixelRatio;}`,fragmentShader:`uniform float brightness;varying float alpha;varying vec3 vColor;void main(){vec2 p=gl_PointCoord-.5;float d=length(p);float light=exp(-d*10.)+pow(max(0.,1.-abs(p.x)*16.),5.)*max(0.,.5-abs(p.y))*.3+pow(max(0.,1.-abs(p.y)*16.),5.)*max(0.,.5-abs(p.x))*.3;gl_FragColor=vec4(vColor*1.8,light*alpha*brightness);}`});const stars=new T.Points(geometry,material);scene.add(stars);return{material,skyMat};
 }
 function waterNormals(){const size=256,data=new Uint8Array(size*size*4);for(let y=0;y<size;y++)for(let x=0;x<size;x++){const u=x/size*Math.PI*2,v=y/size*Math.PI*2;const dx=.4*Math.cos(u*8+v*3)+.24*Math.cos(u*19-v*11)+.12*Math.sin(u*37+v*23);const dy=.34*Math.sin(u*4+v*9)+.23*Math.cos(u*13-v*17)+.12*Math.sin(u*31+v*29);const n=v3(dx,dy,1).normalize(),i=(y*size+x)*4;data[i]=(n.x*.5+.5)*255;data[i+1]=(n.y*.5+.5)*255;data[i+2]=(n.z*.5+.5)*255;data[i+3]=255}const tex=new T.DataTexture(data,size,size,T.RGBAFormat);tex.wrapS=tex.wrapT=T.RepeatWrapping;tex.magFilter=T.LinearFilter;tex.minFilter=T.LinearMipmapLinearFilter;tex.generateMipmaps=true;tex.needsUpdate=true;return tex}
-export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(text:string)=>void):SceneAPI{
+export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(text:string)=>void,onDoorHint:(text:string|null)=>void=()=>{}):SceneAPI{
  let options={...initial},mode:ViewMode='close',disposed=false,suspended=false,time=0,frames=0,statTime=0,firstFrame=true;
  const scene=new T.Scene();scene.fog=new T.FogExp2(0x111e48,.0027);
  const camera=new T.PerspectiveCamera(43,host.clientWidth/host.clientHeight,.06,650);camera.position.set(1.0,3.65,5.8);
@@ -115,19 +126,25 @@ export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(te
  // Boost reflection at elevated reference-camera angles, while retaining Fresnel.
  water.material.fragmentShader=water.material.fragmentShader.replace('rf0 = 0.02','rf0 = 0.48');scene.add(water);
  const still=new T.Mesh(new T.PlaneGeometry(1100,1100),new T.MeshStandardMaterial({color:0x0b1c43,metalness:.25,roughness:.5}));still.rotation.x=-Math.PI/2;still.position.y=-.018;still.visible=false;scene.add(still);
- const rails=new T.Group();const railmat=mat(0x6c82b0,.8,.28);for(const x of [-1.05,1.05])box(rails,.05,.055,240,x,.045,-45,railmat);const ties=mat(0x111a30,.4,.6);for(let i=0;i<140;i++)box(rails,2.7,.045,.14,0,.005,30-i*1.25,ties);scene.add(rails);
+ const rails=new T.Group();const railmat=mat(0x6c82b0,.8,.28);for(const x of [-1.05*TRAIN_WIDTH_SCALE,1.05*TRAIN_WIDTH_SCALE])box(rails,.05,.055,240,x,.045,-45,railmat);const ties=mat(0x111a30,.4,.6);for(let i=0;i<140;i++)box(rails,2.7*TRAIN_WIDTH_SCALE,.045,.14,0,.005,30-i*1.25,ties);scene.add(rails);
+ const journey=buildPassingScenery();scene.add(journey.root);
  const rng=random(13),particleGeo=new T.BufferGeometry(),pos=new Float32Array(150*3),col=new Float32Array(150*3);for(let i=0;i<150;i++){pos[i*3]=(rng()-.5)*45;pos[i*3+1]=rng()*12+.4;pos[i*3+2]=(rng()-.5)*70;const c=new T.Color().setHSL(.48+rng()*.35,.8,.66);col.set([c.r,c.g,c.b],i*3)}particleGeo.setAttribute('position',new T.BufferAttribute(pos,3));particleGeo.setAttribute('color',new T.BufferAttribute(col,3));
  const particleMat=new T.ShaderMaterial({vertexColors:true,transparent:true,depthWrite:false,blending:T.AdditiveBlending,uniforms:{time:{value:0}},vertexShader:`uniform float time;varying vec3 vColor;void main(){vColor=color;vec4 p=modelViewMatrix*vec4(position,1.);gl_Position=projectionMatrix*p;gl_PointSize=min(12.,65./max(1.,-p.z))*(.7+.3*sin(time+position.x));}`,fragmentShader:`varying vec3 vColor;void main(){float r=length(gl_PointCoord-.5);gl_FragColor=vec4(vColor,exp(-r*r*22.)*.7);}`});const particles=new T.Points(particleGeo,particleMat);scene.add(particles);
  const composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));const bloom=new UnrealBloomPass(new T.Vector2(host.clientWidth,host.clientHeight),.22,.4,1.25);composer.addPass(bloom);composer.addPass(new OutputPass());
  const keys=new Set<string>(),forward=v3(),right=v3(),move=v3();let yaw=0,pitch=0,drag=false,lastX=0,lastY=0,walkDistance=10;
  let transition:{p:T.Vector3;t:T.Vector3}|null=null;
- const setView=(v:ViewMode)=>{mode=v;keys.clear();controls.enabled=v!=='walk';controls.autoRotate=false;drag=false;const presets={inspect:[v3(.72,3.2,2.05),v3(0,3.59,.61)],cinema:[v3(8.5,7.6,12),v3(-.5,2.15,-2.8)],orbit:[v3(13,7,15),v3(0,2,-8)],close:[v3(1.0,3.65,5.8),v3(0,2.82,.6)],walk:[v3(3.1,2.9,5.6),v3(0,2.5,.6)]};const[p,t]=presets[v];transition={p,t};if(v==='walk'){const d=t.clone().sub(p).normalize();yaw=Math.atan2(-d.x,-d.z);pitch=Math.asin(d.y);walkDistance=t.distanceTo(p)}renderer.domElement.focus({preventScroll:true})};
- const onDown=(e:PointerEvent)=>{renderer.domElement.focus({preventScroll:true});if(mode==='cinema')controls.autoRotate=false;if(mode==='walk'){drag=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId)}};
- const onMove=(e:PointerEvent)=>{if(!drag||mode!=='walk')return;yaw-=(e.clientX-lastX)*.004;pitch=T.MathUtils.clamp(pitch-(e.clientY-lastY)*.004,-1.4,1.4);lastX=e.clientX;lastY=e.clientY};const onUp=()=>{drag=false};
+ let lastDoorHint:string|null=null,downX=0,downY=0;
+ const nearestDoor=()=>mode==='walk'&&Math.abs(camera.position.x)<1.5?train.doors.filter(d=>Math.abs(camera.position.z-d.z)<2.4).sort((a,b)=>Math.abs(camera.position.z-a.z)-Math.abs(camera.position.z-b.z))[0]:undefined;
+ const toggleDoor=()=>{renderer.domElement.focus({preventScroll:true});const door=nearestDoor();if(!door)return '靠近车门后可操作';if(!door.toggle(camera.position))return '请离开门槛后再关门';return door.open?'正在开门':'正在关门';};
+ const raycaster=new T.Raycaster();
+ const setView=(v:ViewMode)=>{mode=v;keys.clear();controls.enabled=v!=='walk';controls.autoRotate=false;drag=false;const presets={inspect:[v3(.72,3.2,2.05),v3(0,3.59,.61)],cinema:[v3(8.5,7.6,12),v3(-.5,2.15,-2.8)],orbit:[v3(13,7,15),v3(0,2,-8)],close:[v3(1.0,3.65,5.8),v3(0,2.82,.6)],walk:[v3(0,2.85,-.05),v3(0,2.9,-10)]};const[p,t]=presets[v];transition={p,t};if(v==='walk'){const d=t.clone().sub(p).normalize();yaw=Math.atan2(-d.x,-d.z);pitch=Math.asin(d.y);walkDistance=t.distanceTo(p)}renderer.domElement.focus({preventScroll:true})};
+ const onDown=(e:PointerEvent)=>{downX=e.clientX;downY=e.clientY;renderer.domElement.focus({preventScroll:true});if(mode==='cinema')controls.autoRotate=false;if(mode==='walk'){drag=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId)}};
+ const onMove=(e:PointerEvent)=>{if(!drag||mode!=='walk')return;yaw-=(e.clientX-lastX)*.004;pitch=T.MathUtils.clamp(pitch-(e.clientY-lastY)*.004,-1.4,1.4);lastX=e.clientX;lastY=e.clientY};const onUp=(e:PointerEvent)=>{drag=false;if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;const door=nearestDoor();if(!door)return;const r=renderer.domElement.getBoundingClientRect();raycaster.setFromCamera(new T.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),camera);if(raycaster.intersectObject(door.root,true).length)toggleDoor();};
+ const onCancel=()=>{drag=false;};
  const isUI=(e:KeyboardEvent)=>(e.target instanceof HTMLElement)&&!!e.target.closest('button,input,[role="slider"],[role="dialog"]');
- const onKey=(e:KeyboardEvent)=>{if(isUI(e))return;if(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){e.preventDefault();keys.add(e.code);transition=null}};
+ const onKey=(e:KeyboardEvent)=>{if(isUI(e))return;if(e.code==='KeyF'&&!e.repeat){e.preventDefault();toggleDoor();return;}if(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){e.preventDefault();keys.add(e.code);transition=null}};
  const keyUp=(e:KeyboardEvent)=>keys.delete(e.code);const blur=()=>{keys.clear();drag=false};
- renderer.domElement.addEventListener('pointerdown',onDown);renderer.domElement.addEventListener('pointermove',onMove);renderer.domElement.addEventListener('pointerup',onUp);renderer.domElement.addEventListener('pointercancel',onUp);window.addEventListener('keydown',onKey);window.addEventListener('keyup',keyUp);window.addEventListener('blur',blur);
+ renderer.domElement.addEventListener('pointerdown',onDown);renderer.domElement.addEventListener('pointermove',onMove);renderer.domElement.addEventListener('pointerup',onUp);renderer.domElement.addEventListener('pointercancel',onCancel);window.addEventListener('keydown',onKey);window.addEventListener('keyup',keyUp);window.addEventListener('blur',blur);
  const resize=()=>{const w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);composer.setSize(w,h)};const observer=new ResizeObserver(resize);observer.observe(host);
  const clock=new T.Clock();let raf=0;
  const updateOptions=(o:SceneOptions)=>{const prev=options;options={...o};water.visible=o.reflections;still.visible=!o.reflections;water.material.uniforms.distortionScale.value=.15+o.waves*3.2;sky.material.uniforms.brightness.value=o.stars;sky.skyMat.uniforms.brightness.value=o.stars;if(prev.quality!==o.quality||firstFrame){const ratio=Math.min(devicePixelRatio,o.quality==='high'?1.65:1);renderer.setPixelRatio(ratio);composer.setPixelRatio(ratio);sky.material.uniforms.pixelRatio.value=ratio;resize()}};
@@ -137,20 +154,23 @@ export function createScene(host:HTMLDivElement,initial:SceneOptions,onStats:(te
   else if(mode==='walk'){
    forward.set(-Math.sin(yaw),0,-Math.cos(yaw));right.set(Math.cos(yaw),0,-Math.sin(yaw));move.set(0,0,0);
    if(keys.has('KeyW')||keys.has('ArrowUp'))move.add(forward);if(keys.has('KeyS')||keys.has('ArrowDown'))move.sub(forward);if(keys.has('KeyD')||keys.has('ArrowRight'))move.add(right);if(keys.has('KeyA')||keys.has('ArrowLeft'))move.sub(right);if(keys.has('KeyE'))move.y+=1;if(keys.has('KeyQ'))move.y-=1;
-   const old=camera.position.clone();camera.position.addScaledVector(move.normalize(),dt*(keys.has('ShiftLeft')||keys.has('ShiftRight')?8:3.2));camera.position.y=T.MathUtils.clamp(camera.position.y,.5,45);camera.position.x=T.MathUtils.clamp(camera.position.x,-100,100);camera.position.z=T.MathUtils.clamp(camera.position.z,-95,70);
-   // Keep the observer outside opaque coach bodies; platform stays reachable.
-   if(Math.abs(camera.position.x)<1.97&&camera.position.z<-.95&&camera.position.z>-43&&camera.position.y<5.55){camera.position.x=old.x;camera.position.z=old.z}
+   const old=camera.position.clone();camera.position.addScaledVector(move.normalize(),dt*(keys.has('ShiftLeft')||keys.has('ShiftRight')?3:1.6));camera.position.y=T.MathUtils.clamp(camera.position.y,.5,45);camera.position.x=T.MathUtils.clamp(camera.position.x,-100,100);camera.position.z=T.MathUtils.clamp(camera.position.z,-95,70);
+   // One walk mode covers the platform, doorway and all carriages.
+   if(mode==='walk'){constrainWalk(old,camera.position);for(const door of train.doors){if(Math.abs(old.z-door.z)<2||Math.abs(camera.position.z-door.z)<2)door.constrain(old,camera.position);}}
+
    const look=v3(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),-Math.cos(yaw)*Math.cos(pitch));camera.lookAt(camera.position.clone().add(look));controls.target.copy(camera.position).addScaledVector(look,walkDistance);
   }else{
    camera.getWorldDirection(forward);forward.y=0;forward.normalize();right.crossVectors(forward,camera.up).normalize();move.set(0,0,0);if(keys.has('KeyW'))move.add(forward);if(keys.has('KeyS'))move.sub(forward);if(keys.has('KeyA'))move.sub(right);if(keys.has('KeyD'))move.add(right);if(keys.has('KeyQ'))move.y-=1;if(keys.has('KeyE'))move.y+=1;move.normalize().multiplyScalar(dt*4);camera.position.add(move);controls.target.add(move);if(mode==='cinema'&&!keys.size){controls.autoRotate=!options.paused;controls.autoRotateSpeed=.13}controls.update(dt);
   }
-  character.animate(time,options.wind);train.root.position.y=Math.sin(time*1.4)*.008;train.wheels.forEach(w=>w.rotation.x=-time*.55);rails.position.z=(time*1.6)%1.25;water.material.uniforms.time.value=time*.3;sky.material.uniforms.time.value=time;particleMat.uniforms.time.value=time;
+  for(const door of train.doors)door.update(dt,camera.position);
+  const near=nearestDoor(),hint=near?(near.open?'关门':'开门'):null;if(hint!==lastDoorHint){lastDoorHint=hint;onDoorHint(hint);}
+  character.animate(time,options.wind);train.root.position.y=Math.sin(time*2.1)*.014;train.root.rotation.z=Math.sin(time*1.3)*.002;train.wheels.forEach(w=>w.rotation.x=-time*TRAVEL_SPEED/.52);rails.position.z=(time*TRAVEL_SPEED)%1.25;journey.update(time);water.material.uniforms.time.value=time*.65;sky.material.uniforms.time.value=time;particleMat.uniforms.time.value=time;
   if(!options.paused){const p=particleGeo.attributes.position;for(let i=0;i<p.count;i++){p.setZ(i,p.getZ(i)+dt*(.65+options.wind*1.5));if(p.getZ(i)>26)p.setZ(i,-44)}p.needsUpdate=true}
   if(options.quality==='high')composer.render();else renderer.render(scene,camera);
   firstFrame=false;frames++;statTime+=dt;if(statTime>1.2){onStats(`${Math.round(frames/statTime)} FPS · ${options.quality==='high'?'高清':'流畅'}渲染`);frames=0;statTime=0}
  };
  animate();
- return{setHairVisible:character.setHairVisible,ready:character.ready,setOptions:updateOptions,setView,key:(k,v)=>{if(v){keys.add(k);transition=null}else keys.delete(k)},setSuspended:v=>{suspended=v;keys.clear()},dispose:()=>{disposed=true;cancelAnimationFrame(raf);observer.disconnect();controls.dispose();window.removeEventListener('keydown',onKey);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',onDown);renderer.domElement.removeEventListener('pointermove',onMove);renderer.domElement.removeEventListener('pointerup',onUp);renderer.domElement.removeEventListener('pointercancel',onUp);const geometries=new Set<T.BufferGeometry>(),materials=new Set<T.Material>();scene.traverse(o=>{const m=o as T.Mesh;if(m.geometry)geometries.add(m.geometry);if(m.material)(Array.isArray(m.material)?m.material:[m.material]).forEach(v=>materials.add(v))});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());character.dispose();normals.dispose();composer.dispose();bloom.dispose();renderer.dispose();renderer.domElement.remove()}};
+ return{toggleDoor,setHairVisible:character.setHairVisible,ready:character.ready,setOptions:updateOptions,setView,key:(k,v)=>{if(v){keys.add(k);transition=null}else keys.delete(k)},setSuspended:v=>{suspended=v;keys.clear()},dispose:()=>{disposed=true;cancelAnimationFrame(raf);observer.disconnect();controls.dispose();window.removeEventListener('keydown',onKey);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',onDown);renderer.domElement.removeEventListener('pointermove',onMove);renderer.domElement.removeEventListener('pointerup',onUp);renderer.domElement.removeEventListener('pointercancel',onCancel);const geometries=new Set<T.BufferGeometry>(),materials=new Set<T.Material>();scene.traverse(o=>{const m=o as T.Mesh;if(m.geometry)geometries.add(m.geometry);if(m.material)(Array.isArray(m.material)?m.material:[m.material]).forEach(v=>materials.add(v))});geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());character.dispose();normals.dispose();composer.dispose();bloom.dispose();renderer.dispose();renderer.domElement.remove()}};
 }
 
 

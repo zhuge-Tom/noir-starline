@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import * as T from 'three';
+import {createCarriageDoor} from '../app/carriage-door.ts';
+import {interiorPalette} from '../app/carriage-interior.ts';
+const door=createCarriageDoor(-1.18,interiorPalette()),outside=new T.Vector3(0,2.95,-.43),inside=new T.Vector3(0,2.95,-2);
+let next=inside.clone();door.constrain(outside,next);assert(next.z>door.z,'Closed door must block entry');
+next=outside.clone();door.constrain(inside,next);assert(next.z<door.z,'Closed door must block exit');
+assert(door.toggle(outside));door.update(.4,outside);assert(door.amount>0&&door.amount<1);
+assert(door.toggle(outside));door.update(.5,outside);assert.equal(door.amount,0,'Animation can reverse');
+door.toggle(outside);for(let i=0;i<80;i++)door.update(1/60,outside);
+assert.equal(door.amount,1);next=inside.clone();door.constrain(outside,next);assert.equal(next.z,inside.z,'Open door allows crossing');
+assert(!door.toggle(new T.Vector3(0,3,door.z)),'Cannot close on doorway occupant');
+assert(door.toggle(inside));door.update(.1,new T.Vector3(0,3,door.z));assert(door.open,'Closing door reopens if threshold becomes occupied');
+console.log('PASS: door opening, reversing, two-sided collision, safe closing and reopening');
